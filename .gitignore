@@ -1,0 +1,53 @@
+# Machine-specific configuration and credentials
+/config.json
+/config.json.*
+.env
+.env.*
+!.env.example
+
+# Compiled programs, debug symbols, and historical binary backups
+*.exe
+*.exe.*
+*.exe~
+*.dll
+*.pdb
+*.test
+*.test.exe
+
+# Build cache and packaging outputs
+/.gocache/
+/bin/
+/build/
+/dist/
+/package-*/
+*.zip
+*.zip.sha256
+/local-artifacts/
+/artifacts/
+/source-cache/
+/worktrees/
+/uploads/
+/test-results/
+
+# Local updater bundles, receipts, and rollback copies
+/agent-updates/
+/manager-updates/
+/script-updates/
+
+# Runtime records and maintenance transactions
+/jobs/
+/logs/
+/host-policy/
+/checkpoint.json
+*.log
+*.lock
+.write-*
+
+# Editor and operating-system temporary files
+*~
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

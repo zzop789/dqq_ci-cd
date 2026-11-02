@@ -1,0 +1,785 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZYF · 自用发布管理</title>
+<style>
+:root{color-scheme:dark;--bg:#10151c;--card:#19212d;--line:#303d4c;--muted:#95a7be;--text:#edf3fa;--accent:#60dcc1}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 'Segoe UI','Microsoft YaHei',sans-serif}header{padding:25px 5%;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}h1{font-size:23px;margin:0}small,.muted{color:var(--muted)}main{max-width:1300px;margin:auto;padding:25px;display:grid;grid-template-columns:310px 1fr;gap:22px}section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:20px}h2{font-size:17px;margin:0 0 16px}label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}input{width:100%;background:#101721;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:10px}input[type=checkbox]{width:auto}button{padding:10px 15px;border:1px solid var(--line);border-radius:7px;background:#283647;color:var(--text);cursor:pointer;margin:6px 5px 0 0}button:hover{border-color:var(--accent)}button.primary{background:var(--accent);color:#0b2923;font-weight:700}button.danger{color:#ffbd9e}button:disabled{opacity:.4;cursor:wait}.pill{border:1px solid var(--line);border-radius:30px;padding:6px 13px;color:var(--muted)}.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}.metric{background:#101721;padding:14px;border-radius:8px;overflow-wrap:anywhere}.metric b{display:block;margin-top:5px;font-size:17px}.notice{border-left:3px solid #e7b65b;background:#332b1f;padding:12px 15px;color:#f0d6a9;font-size:13px;margin:15px 0}.error{color:#ffb5a7;white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:10px;text-align:left;border-bottom:1px solid var(--line)}pre{background:#0b1016;padding:16px;border-radius:8px;max-height:440px;overflow:auto;white-space:pre-wrap;font:12px/1.65 Consolas,monospace}details{margin-top:12px}#flash{margin:0 0 15px;padding:12px;display:none;background:#332b1f;border-radius:8px}@media(max-width:850px){main{grid-template-columns:1fr}.cards{grid-template-columns:1fr}}
+</style></head><body><header><div><h1>ZYF / 自用发布管理</h1><small>Redis 配置管理 · 本机打包 · SSH 上传 · 维护发布</small></div><span class="pill" id="connection">尚未连接</span></header><main><aside><section><h2>服务器连接</h2><label>主机 IP / 域名</label><input id="host"><label>SSH 端口</label><input id="port" type="number"><label>远端 Windows 用户</label><input id="user"><label>本机 SSH 私钥路径</label><input id="key"><button id="save">保存</button><button class="primary" id="connect">连接服务器</button><p class="muted">管理接口经 SSH 隧道访问。迁移时修改地址，首次连接先核对新服务器的主机指纹。</p><p class="error" id="connectError"></p></section><section><h2>接入步骤</h2><p>① 在远端安装部署 Agent，无需 Git / Go。</p><p>② 在本机运行「首次接入.cmd」，配置 SSH 密钥。</p><p>③ 本机配置游戏仓库路径，安装 Git 和 Go。</p><p>④ 本机测试打包，通过后上传维护部署。</p><small>完整安装脚本和说明位于软件目录。首次部署前请确认游戏端口与现有服务没有冲突。</small></section></aside><div><div id="flash"></div><section><h2>远端概览 <small id="updated"></small></h2><div class="cards"><div class="metric">游戏服务<b id="gameState">未知</b></div><div class="metric">当前运行版本<b id="version">—</b></div><div class="metric">战斗规则版本<b id="ruleset">—</b></div><div class="metric">部署任务<b id="active">—</b></div></div><details><summary>服务器详情</summary><pre id="status">连接后读取</pre></details><button id="refresh">刷新状态</button><button data-action="start">启动服务</button><button data-action="stop" class="danger">维护停服</button><button data-action="rollback" class="danger">回滚程序版本</button><button data-action="recover" class="danger">恢复中断检查点</button></section><section><h2>可选：远端仓库构建（需要 push）</h2><label>已推送到允许分支的完整提交 SHA</label><input id="commit" maxlength="40" placeholder="40 位 Git 提交 SHA"><button id="source">读取本机 HEAD</button><span class="muted" id="sourceHint"></span><div class="notice">当前为维护式更新，尚无整局自动排空。切换会中断匹配和内存对局。编译与测试在停止旧服务之前完成，构建失败不会切服。</div><label><input id="maintenance" type="checkbox"> 我已安排维护，确认切换、停止或回滚程序版本可能中断现有对局；已核对客户端兼容性。</label><button data-action="build">仅构建与测试</button><button data-action="deploy" class="primary">构建并部署到远端</button><button id="retry" hidden>查询 / 重试上次提交</button></section><section><h2>任务历史 <small>最新 10 条</small></h2><table><thead><tr><th>任务</th><th>提交 / 时间</th><th>状态</th><th></th></tr></thead><tbody id="jobs"></tbody></table><h2 style="margin-top:20px">任务日志 <small id="logID"></small></h2><pre id="log">选择任务查看日志</pre></section></div></main>
+<script>
+const exitButton=document.createElement('button');exitButton.textContent='退出本机后台';document.querySelector('header').append(exitButton);exitButton.onclick=async()=>{try{await api('exit','POST',{});connected=false;document.body.replaceChildren();const p=document.createElement('p');p.style.padding='40px';p.textContent='本机管理器已退出。远端已接收的任务会继续执行。';document.body.append(p)}catch(e){message(e.message)}};
+const token='__SESSION__';let connected=false,state=null,selected='',busy=false,pending=null;const $=id=>document.getElementById(id);const labels={build:'仅构建',deploy:'构建发布',start:'启动',stop:'停服',rollback:'回滚程序版本',recover:'恢复',queued:'等待',running:'执行中',succeeded:'成功',failed:'失败',interrupted:'中断'};
+let hostAdminWorking=false,hostPolicyWorking=false;
+async function api(path,method='GET',body){let r=await fetch('/api/'+path,{method,headers:{'X-CICD-Token':token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let v=await r.json();if(!r.ok){const e=Error(v.error||v.message||v.code||r.statusText);e.code=v.code;throw e}return v}
+function message(t){$('flash').textContent=t;$('flash').style.display='block'}
+function unknown(e){connected=false;state=null;$('connection').textContent='连接异常';$('gameState').textContent='未知';$('version').textContent='—';$('ruleset').textContent='—';$('active').textContent='未知';$('connectError').textContent=e.message;redisInvalidateConnection()}
+async function refresh(){if(!connected||busy)return;busy=true;try{state=await api('remote/status');$('updated').textContent='最近读取 '+new Date().toLocaleTimeString();$('gameState').textContent=state.game?'运行中':state.game_error;$('version').textContent=state.game?.version||'—';$('ruleset').textContent=state.game?.runtime_identity?.ruleset_version||state.game?.combat_ruleset||'—';$('active').textContent=state.blocked?'等待恢复检查点':state.active?'执行中':'空闲';$('status').textContent=JSON.stringify(state,null,2);let jobs=await api('remote/jobs');$('jobs').replaceChildren();for(const j of jobs.slice(0,10)){let tr=document.createElement('tr');for(const v of [labels[j.action]||j.action,(j.commit||'').slice(0,12)+' '+new Date(j.created).toLocaleString(),labels[j.status]||j.status]){let td=document.createElement('td');td.textContent=v;tr.append(td)}let td=document.createElement('td'),b=document.createElement('button');b.textContent='日志';b.onclick=()=>{selected=j.id;loadLog()};td.append(b);tr.append(td);$('jobs').append(tr)}if(selected)await loadLog()}catch(e){unknown(e)}finally{busy=false}}
+async function loadLog(){if(!selected)return;let v=await api('remote/log?id='+encodeURIComponent(selected));$('logID').textContent=selected.slice(0,8);$('log').textContent=v.text}
+$('save').onclick=async()=>{redisInvalidateConnection();try{await api('config','POST',{host:$('host').value.trim(),port:Number($('port').value),user:$('user').value.trim(),key:$('key').value.trim()});unknown(Error('配置已保存，请重新连接'))}catch(e){message(e.message)}};
+$('connect').onclick=async()=>{redisInvalidateConnection();let b=$('connect');b.disabled=true;try{await api('connect','POST',{});connected=true;$('connection').textContent='管理连接正常';$('connectError').textContent='';await refresh();if(connected)redisConnectionReady()}catch(e){unknown(e)}finally{b.disabled=false}};
+$('refresh').onclick=refresh;
+$('source').onclick=async()=>{try{let v=await api('source');$('commit').value=v.commit;$('sourceHint').textContent=v.dirty?'存在未提交修改：远端不会包含这些修改。':'请确认此提交已经 push。';if(v.dirty)message('本机工作区有未提交改动。读取 HEAD 不会提交或推送代码，也不会把这些改动发到远端。')}catch(e){message(e.message)}};
+async function submit(j){if(pending?.action==='host-policy'&&pending.id!==j.id)return message('会话策略维护任务尚未确认，请先使用原请求 ID 查询 / 重试，不能用新任务覆盖。');pending=j;sessionStorage.setItem('pending',JSON.stringify(j));$('retry').hidden=false;try{let v=await api('remote/jobs','POST',j);if(!v||v.id!==j.id)throw Error('任务回执与原请求 ID 不一致，提交结果待核对');selected=v.id;pending=null;sessionStorage.removeItem('pending');$('retry').hidden=true;message('远端已接收任务 '+v.id.slice(0,8)+'，可以关闭管理页面。');await refresh()}catch(e){message(e.message+'。如响应丢失，请使用“查询 / 重试上次提交”，不要重新创建任务。')}finally{hostPolicyUpdateControls()}}
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{if(!connected||!state)return message('请先连接并读取服务器状态');let action=b.dataset.action;if(state.active)return message('远端已有任务执行中');let maintenance=$('maintenance').checked;if(['deploy','stop','rollback','recover'].includes(action)&&!maintenance)return message('请先勾选维护影响确认');let commit=['build','deploy'].includes(action)?$('commit').value.trim().toLowerCase():'';if(commit&&!/^[a-f0-9]{40}$/.test(commit))return message('请填写完整提交 SHA');if(['deploy','stop','rollback','recover'].includes(action)&&!confirm('目标：'+$('host').value+'\n操作：'+labels[action]+'\n将可能中断现有对局。继续？'))return;await submit({id:crypto.randomUUID().replaceAll('-',''),action,commit,maintenance,expected:state.deployment?.current_version||''})});
+$('retry').onclick=async()=>{const job=pending;if(!job)return;try{if(job.action==='host-policy'){if(!connected||hostPolicyNeedReconnect)throw Error('请先重新连接原目标服务器，再查询 / 重试维护任务。');const epoch=hostPolicyEpoch,config=await api('config');if(epoch!==hostPolicyEpoch||!connected||hostPolicyNeedReconnect)throw Error('连接已变化，请先恢复原连接。');if(!hostPolicyPendingTarget||hostPolicyConnectionKey(config)!==hostPolicyPendingTarget)throw Error('维护任务属于另一连接目标，禁止向当前服务器重发；请恢复原连接后使用原请求 ID。')}await submit(job);if(!pending){hostPolicyPendingTarget='';sessionStorage.removeItem('hostPolicyPendingTarget')}}catch(error){message(error.message)}};
+api('config').then(c=>{for(const k of ['host','port','user','key'])$(k).value=c[k];try{pending=JSON.parse(sessionStorage.getItem('pending'));$('retry').hidden=!pending}catch{}}).catch(e=>message(e.message));setInterval(refresh,5000);
+labels.package='本机制品部署';labels.localbuild='本机构建';
+const localPanel=document.createElement('section');
+localPanel.innerHTML='<h2>本机代码构建与发布（无需提交 / push）<small> · 最新 10 条</small></h2><p>使用 config.json 的 local_repo。包含未提交修改；构建期间请勿编辑源文件。本机需要 Git 和 Go，远端只接收制品。部署前请在“远端概览”勾选维护影响确认。</p><button id="localBuild">本机测试并打包</button><button id="localRefresh">刷新本机构建</button><p id="localHint"></p><table><thead><tr><th>本机构建</th><th>状态 / SHA256</th><th>操作</th></tr></thead><tbody id="localJobs"></tbody></table><pre id="localLog">选择构建查看日志</pre>';
+document.querySelector('main > div').append(localPanel);
+let localSelected='',uploadBusy=false;
+async function refreshLocal(){try{const jobs=await api('local-jobs');$('localJobs').replaceChildren();for(const j of jobs.slice(0,10)){const tr=document.createElement('tr');const id=document.createElement('td');id.textContent=new Date(j.created).toLocaleString()+' / '+j.id.slice(0,8);const status=document.createElement('td');status.textContent=(labels[j.status]||j.status)+' '+(j.artifact||'');const actions=document.createElement('td');const log=document.createElement('button');log.textContent='日志';log.onclick=()=>{localSelected=j.id;refreshLocal()};actions.append(log);if(j.status==='succeeded'&&j.artifact){const deploy=document.createElement('button');deploy.textContent='上传此包并部署';deploy.disabled=uploadBusy;deploy.onclick=async()=>{if(!connected||!state)return message('请先连接远端');if(state.active||state.blocked)return message('远端忙碌或等待恢复，请先处理');if(!$('maintenance').checked)return message('请先勾选维护影响确认');if(!confirm('将上传已构建的固定包并维护部署，可能中断对局。\n目标：'+$('host').value+'\nSHA256：'+j.artifact))return;const expected=state.deployment?.current_version||'';uploadBusy=true;deploy.disabled=true;$('localHint').textContent='正在上传，完成后提交部署任务；此阶段请保持本机后台运行。';try{const result=await api('upload-local','POST',{id:j.id});await submit({id:crypto.randomUUID().replaceAll('-',''),action:'package',artifact:result.artifact,commit:'',maintenance:true,expected});$('localHint').textContent='上传完成。请查看远端任务历史与日志确认部署结果。'}catch(e){message(e.message)}finally{uploadBusy=false;refreshLocal()}};actions.append(deploy)}tr.append(id,status,actions);$('localJobs').append(tr)}if(localSelected){const v=await api('local-log?id='+localSelected);$('localLog').textContent=v.text}}catch(e){$('localHint').textContent=e.message}}
+$('localBuild').onclick=async()=>{try{const j=await api('local-build','POST',{id:crypto.randomUUID().replaceAll('-','')});localSelected=j.id;$('localHint').textContent='本机构建已开始，不访问远端仓库。请保持本机后台运行。';refreshLocal()}catch(e){message(e.message)}};
+$('localRefresh').onclick=refreshLocal;setInterval(refreshLocal,5000);refreshLocal();
+const envPanel=document.createElement('section');envPanel.innerHTML='<details><summary>远端网络设置</summary><p>仅编辑监听地址和客户端地址；仅保存不会停止或重启游戏，保存会自动备份。玩法与经济参数使用 Redis 配置面板；此处不切换服务器配置来源。</p><button id="readEnv">读取网络设置</button><div id="envFields"></div><button id="saveEnv">仅保存网络设置</button><p id="envHint"></p></details>';
+localPanel.after(envPanel);let envSnapshot=null;
+const envLabels={HTTP_ADDR:'监听地址',PUBLIC_BASE_URL:'客户端访问地址'};
+$('readEnv').onclick=async()=>{try{envSnapshot=await api('remote/environment');$('envFields').replaceChildren();for(const [k,label] of Object.entries(envLabels)){const l=document.createElement('label');l.textContent=label;const input=document.createElement('input');input.id='env_'+k;input.value=envSnapshot.values[k]||'';l.append(input);$('envFields').append(l)}$('envHint').textContent='已读取。修改后仅保存，下次部署或手动重启才生效。'}catch(e){message(e.message)}};
+$('saveEnv').onclick=async()=>{if(!envSnapshot)return message('请先读取远端配置');const values={},diff=[];for(const k of Object.keys(envLabels)){const value=$('env_'+k).value.trim();if(value!==(envSnapshot.values[k]||'')){values[k]=value;diff.push(envLabels[k]+': '+(envSnapshot.values[k]||'(未设置)')+' → '+value)}}if(!diff.length)return message('配置没有变化');if(!confirm('仅保存，不重启：\n'+diff.join('\n')))return;try{const result=await api('remote/environment','POST',{revision:envSnapshot.revision,values});$('envHint').textContent='保存成功，未重启。备份：'+(result.backup||'无变化');envSnapshot=null}catch(e){message(e.message)}};
+labels['host-policy']='会话策略维护应用';
+const hostPolicyPanel=document.createElement('section');hostPolicyPanel.id='hostPolicyPanel';
+hostPolicyPanel.innerHTML=`<h2>会话与超时策略</h2>
+<p>管理登记、排队、失联与房间故障的等待时间。读取的是服务器 host.json 文件配置，不代表当前进程已采用的值。</p>
+<p class="notice">保存草稿会校验候选，不修改正在使用的文件。应用草稿需要维护，可能结束现有对局：原服务运行时会重启；原服务停止时，应用并验证后保持停止。</p>
+<button id="hostPolicyRead">读取服务器文件配置与草稿</button>
+<p id="hostPolicySource" class="muted">请先连接服务器。旧版 Agent 需升级后才能编辑。</p>
+<fieldset id="hostPolicyFields" disabled style="border:0;padding:0;margin:0"><legend>会话与故障策略</legend><div class="cards" id="hostPolicyInputs"></div></fieldset>
+<p id="hostPolicyValidation" class="error" role="status"></p>
+<h3 style="font-size:15px">相对最近读取文件的变化</h3>
+<div style="overflow-x:auto"><table><thead><tr><th>策略</th><th>文件值</th><th>候选值</th></tr></thead><tbody id="hostPolicyChanges"></tbody></table></div>
+<p id="hostPolicyDiffHint" class="muted">尚未读取。</p>
+<button id="hostPolicySave">校验并仅保存草稿</button>
+<label for="hostPolicyDraft">选择已保存的草稿</label><select id="hostPolicyDraft" style="max-width:100%;padding:8px"><option value="">尚未读取草稿</option></select>
+<p id="hostPolicyDraftHint" class="muted">草稿尚未应用。</p>
+<button id="hostPolicyApply" class="danger">维护应用所选草稿</button>
+<details><summary>文件与草稿身份</summary><pre id="hostPolicyMetadata">尚未读取。</pre></details>
+<p id="hostPolicyHint" aria-live="polite">所有保存和应用操作均需明确点击；不会自动重发。</p>`;
+envPanel.after(hostPolicyPanel);
+const hostPolicyFields=[
+ {key:'pending_registration_seconds',label:'待激活登记保留时间',unit:'秒',max:86400,description:'发出凭据后，尚无有效凭据请求的登记保留多久。'},
+ {key:'queue_idle_seconds',label:'排队闲置时间',unit:'秒',max:86400,description:'排队期间多久没有有效请求后移除队列票据。'},
+ {key:'suspect_offline_seconds',label:'疑似失联时间',unit:'秒',max:86400,description:'多久没有有效请求后标记疑似失联；标记不代表已经释放身份。'},
+ {key:'session_expire_seconds',label:'活跃会话租约',unit:'秒',max:86400,description:'从最后一次有效授权成功请求计算，到期开始关闭身份和清理席位。'},
+ {key:'lobby_heartbeat_seconds',label:'建议大厅心跳间隔',unit:'秒',max:86400,description:'服务器向客户端建议的心跳间隔；必须小于排队闲置时间。'},
+ {key:'lifecycle_sweep_seconds',label:'生命周期扫描间隔',unit:'秒',max:86400,description:'服务器检查过期登记和队列的间隔；不能大于排队闲置时间。'},
+ {key:'room_failure_limit',label:'房间连续失败次数',unit:'次',max:100,description:'房间推进连续失败达到此次数时，开始故障终止。'},
+ {key:'room_failure_seconds',label:'房间持续失败时间',unit:'秒',max:86400,description:'房间持续失败达到此时间时，也会开始故障终止。'}
+];
+let hostPolicyEpoch=0,hostPolicyNeedReconnect=true,hostPolicySupported=false,hostPolicySnapshot=null,hostPolicySelected='',hostPolicyTarget='';
+let hostPolicyPendingTarget='';
+try{hostPolicyPendingTarget=sessionStorage.getItem('hostPolicyPendingTarget')||''}catch{}
+for(const field of hostPolicyFields){
+ const wrap=document.createElement('div'),label=document.createElement('label'),input=document.createElement('input'),note=document.createElement('p');
+ label.htmlFor='hostPolicy_'+field.key;label.textContent=field.label+'（'+field.unit+'）';
+ input.id=label.htmlFor;input.type='number';input.min='1';input.max=String(field.max);input.step='1';input.inputMode='numeric';input.autocomplete='off';input.placeholder='读取后显示';
+ note.id=input.id+'_help';note.className='muted';note.style.fontSize='12px';note.textContent=field.description+' 范围：1～'+field.max+'。';input.setAttribute('aria-describedby',note.id);
+ input.oninput=()=>{hostPolicySelected='';$('hostPolicyDraft').value='';hostPolicyRenderDiff();hostPolicyUpdateControls()};
+ wrap.append(label,input,note);$('hostPolicyInputs').append(wrap);
+}
+function hostPolicyHash(value){return typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)}
+function hostPolicyID(value){return typeof value==='string'&&/^[a-f0-9]{32}$/.test(value)}
+function hostPolicyVersion(value){return typeof value==='string'&&value.length>0&&value.length<=200&&!/[\x00-\x1f\x7f]/.test(value)}
+function hostPolicyValues(values){
+ if(!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).length!==hostPolicyFields.length)throw Error('会话策略必须完整提供八个字段。');
+ for(const field of hostPolicyFields)if(!Number.isSafeInteger(values[field.key])||values[field.key]<1||values[field.key]>field.max)throw Error(field.label+'必须为 1～'+field.max+' 的整数。');
+ if(values.suspect_offline_seconds>=values.session_expire_seconds)throw Error('疑似失联时间必须小于活跃会话租约。');
+ if(values.queue_idle_seconds>values.session_expire_seconds)throw Error('排队闲置时间不能大于活跃会话租约。');
+ if(values.lobby_heartbeat_seconds>=values.queue_idle_seconds)throw Error('大厅心跳间隔必须小于排队闲置时间。');
+ if(values.lifecycle_sweep_seconds>values.queue_idle_seconds)throw Error('生命周期扫描间隔不能大于排队闲置时间。');
+ return values;
+}
+function hostPolicyCollect(){
+ const values={};for(const field of hostPolicyFields){const raw=$('hostPolicy_'+field.key).value;if(!/^[0-9]+$/.test(raw))throw Error(field.label+'必须填写十进制整数。');values[field.key]=Number(raw)}
+ return hostPolicyValues(values);
+}
+function hostPolicyFill(values){for(const field of hostPolicyFields)$('hostPolicy_'+field.key).value=String(values[field.key])}
+function hostPolicyDifferences(before,after){return hostPolicyFields.filter(field=>before[field.key]!==after[field.key]).map(field=>({field,before:before[field.key],after:after[field.key]}))}
+function hostPolicyCheckDraft(draft){
+ if(!draft||!hostPolicyID(draft.id)||!hostPolicyHash(draft.base_sha256)||!hostPolicyHash(draft.candidate_sha256)||!hostPolicyVersion(draft.expected_version)||typeof draft.created!=='string'||!draft.created)throw Error('草稿身份不完整，不能应用。');
+ hostPolicyValues(draft.values);return draft;
+}
+function hostPolicyDraftMatches(draft){return !!draft&&!!hostPolicySnapshot&&draft.base_sha256===hostPolicySnapshot.revision&&draft.expected_version===hostPolicySnapshot.expected_version}
+function hostPolicyCurrentDraft(){return hostPolicySnapshot?.drafts.find(draft=>draft.id===hostPolicySelected)}
+function hostPolicyRenderDiff(){
+ const rows=$('hostPolicyChanges');rows.replaceChildren();$('hostPolicyValidation').textContent='';
+ if(!hostPolicySnapshot){$('hostPolicyDiffHint').textContent='尚未读取。';return}
+ try{
+  const changes=hostPolicyDifferences(hostPolicySnapshot.values,hostPolicyCollect());
+  for(const change of changes){const row=document.createElement('tr');for(const value of [change.field.label,change.before+' '+change.field.unit,change.after+' '+change.field.unit]){const cell=document.createElement('td');cell.textContent=value;row.append(cell)}rows.append(row)}
+  $('hostPolicyDiffHint').textContent=changes.length?'共 '+changes.length+' 项变化；仅保存草稿不会修改文件或重启服务。':'候选与最近读取的文件配置相同。';
+ }catch(error){$('hostPolicyValidation').textContent=error.message;$('hostPolicyDiffHint').textContent='请先修正输入，暂不能保存或应用。'}
+ const draft=hostPolicyCurrentDraft();
+ $('hostPolicyDraftHint').textContent=draft?'所选草稿：'+draft.id+' · '+(hostPolicyDraftMatches(draft)?'基线与本次读取一致；尚未应用。':'基线或部署版本已变化，请重新编辑保存草稿。'):'尚未选择草稿；编辑内容须先校验并保存。';
+ $('hostPolicyMetadata').textContent=JSON.stringify({host_sha256:hostPolicySnapshot.revision,expected_version:hostPolicySnapshot.expected_version,release_identity_sha256:hostPolicySnapshot.release_identity_sha256,selected_draft:draft||null},null,2);
+}
+function hostPolicyUpdateControls(){
+ if(!$('hostPolicyPanel'))return;
+ const busyPolicy=hostPolicyWorking||redisWorking||hostAdminWorking,available=connected&&!hostPolicyNeedReconnect;
+ let changed=false,valid=false;try{if(hostPolicySnapshot){changed=hostPolicyDifferences(hostPolicySnapshot.values,hostPolicyCollect()).length>0;valid=true}}catch{}
+ $('hostPolicyRead').disabled=busyPolicy||!available;
+ $('hostPolicyFields').disabled=busyPolicy||!available||!hostPolicySupported||!hostPolicySnapshot;
+ $('hostPolicySave').disabled=busyPolicy||!available||!hostPolicySupported||!changed||!valid;
+ $('hostPolicyDraft').disabled=busyPolicy||!available||!hostPolicySupported||!hostPolicySnapshot;
+ const draft=hostPolicyCurrentDraft();
+ $('hostPolicyApply').disabled=busyPolicy||!available||!hostPolicySupported||!valid||!changed||!hostPolicyDraftMatches(draft)||!!pending;
+}
+function hostPolicyInvalidateConnection(){
+ if(!$('hostPolicyPanel'))return;
+ hostPolicyEpoch++;hostPolicyNeedReconnect=true;hostPolicySupported=false;hostPolicySnapshot=null;hostPolicySelected='';hostPolicyTarget='';
+ for(const field of hostPolicyFields)$('hostPolicy_'+field.key).value='';
+ $('hostPolicyDraft').replaceChildren(new Option('请重新读取草稿',''));
+ $('hostPolicySource').textContent='连接变更或失效，旧文件快照和草稿选择已清除。';
+ $('hostPolicyDraftHint').textContent='服务器已保存的草稿不会被删除；重新连接并读取后再操作。';
+ $('hostPolicyMetadata').textContent='尚未读取。';$('hostPolicyHint').textContent='请连接后重新读取；未确认的维护任务仍须使用原请求 ID 查询。';
+ hostPolicyRenderDiff();hostPolicyUpdateControls();
+}
+function hostPolicyConnectionReady(){hostPolicyNeedReconnect=false;$('hostPolicyHint').textContent='点击读取以检查 Agent 能力并建立实际文件基线。';hostPolicyUpdateControls()}
+function hostPolicyConnectionKey(config){return JSON.stringify([config.host,Number(config.port),config.user,config.key])}
+async function hostPolicyCheckTarget(target){
+ const config=await hostPolicyRequest('config');
+ if(!target||hostPolicyConnectionKey(config)!==target)throw Error('连接目标已变化，请重新连接并读取文件配置。');
+}
+async function hostPolicyRequest(path,method='GET',body){
+ const epoch=hostPolicyEpoch,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
+ try{
+  const response=await fetch('/api/'+path,{method,headers:{'X-CICD-Token':token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});
+  const result=await response.json();if(epoch!==hostPolicyEpoch)throw Error('连接上下文已改变，请重新读取。');
+  if(!response.ok){const error=Error(result.error||result.message||result.code||response.statusText);error.code=result.code;throw error}
+  return result;
+ }finally{clearTimeout(timer)}
+}
+async function hostPolicyRun(label,work){
+ if(hostPolicyWorking||redisWorking||hostAdminWorking||!connected||hostPolicyNeedReconnect)return;
+ const epoch=hostPolicyEpoch;hostPolicyWorking=true;hostPolicyUpdateControls();redisUpdateControls();hostAdminUpdateControls();$('hostPolicyHint').textContent=label+'中，请等待；候选校验最多可能需要约一分钟。';
+ try{await work()}catch(error){if(epoch===hostPolicyEpoch){hostPolicySnapshot=null;hostPolicySelected='';$('hostPolicyDraft').replaceChildren(new Option('请重新读取草稿',''));hostPolicyRenderDiff();$('hostPolicyHint').textContent=label+'未确认完成：'+(error.name==='AbortError'?'请求等待超时':error.message)+'。请重新读取文件与草稿核对；不会自动重发或覆盖。'}}
+ finally{hostPolicyWorking=false;hostPolicyUpdateControls();redisUpdateControls();hostAdminUpdateControls()}
+}
+function hostPolicySetSnapshot(result){
+ if(result.status!=='ok'||!['explicit','defaults'].includes(result.source)||!hostPolicyHash(result.revision)||!hostPolicyHash(result.release_identity_sha256)||!hostPolicyVersion(result.expected_version)||result.requires_restart!==true||!Array.isArray(result.drafts))throw Error('服务器文件配置回执不完整。');
+ hostPolicyValues(result.values);const ids=new Set();for(const draft of result.drafts){hostPolicyCheckDraft(draft);if(ids.has(draft.id))throw Error('服务器返回重复草稿。');ids.add(draft.id)}
+ hostPolicySnapshot=result;hostPolicySelected='';hostPolicyFill(result.values);
+ $('hostPolicySource').textContent=(result.source==='explicit'?'值来自 host.json 中显式保存的八字段。':'host.json 未配置该节；以下是管理器内置的 D-195 v1 默认策略；保存草稿时会交由实际宿主校验。')+' 这是文件配置，不代表当前进程已生效。部署版本：'+result.expected_version;
+ hostPolicyRenderDrafts();hostPolicyRenderDiff();
+}
+function hostPolicyRenderDrafts(){
+ const select=$('hostPolicyDraft');select.replaceChildren(new Option('选择草稿查看精确变化',''));
+ for(const draft of hostPolicySnapshot.drafts){const usable=hostPolicyDraftMatches(draft),option=new Option(draft.id+' · '+draft.created+(usable?'':' · 基线已过期'),draft.id);option.disabled=!usable;select.append(option)}
+ select.value=hostPolicySelected;
+}
+$('hostPolicyRead').onclick=()=>hostPolicyRun('读取会话策略',async()=>{
+ const capability=await hostPolicyRequest('remote/ping');
+ hostPolicySupported=capability.host_policy==='v1';
+ if(!hostPolicySupported){hostPolicySnapshot=null;hostPolicySelected='';$('hostPolicyDraft').replaceChildren(new Option('需要升级远端 Agent',''));hostPolicyRenderDiff();$('hostPolicySource').textContent='远端 Agent 未声明 host_policy v1；请升级 Agent 后重新读取，当前禁止保存和应用。';$('hostPolicyHint').textContent='旧版 Agent 不支持会话策略编辑，未执行写入。';return}
+ const config=await hostPolicyRequest('config');hostPolicyTarget=hostPolicyConnectionKey(config);
+ hostPolicySetSnapshot(await hostPolicyRequest('remote/host-policy'));
+ $('hostPolicyHint').textContent='已读取文件配置和草稿。修改后先校验并保存草稿，再安排维护应用。';
+});
+$('hostPolicyDraft').onchange=()=>{hostPolicySelected=$('hostPolicyDraft').value;const draft=hostPolicyCurrentDraft();if(draft)hostPolicyFill(draft.values);hostPolicyRenderDiff();hostPolicyUpdateControls()};
+$('hostPolicySave').onclick=()=>hostPolicyRun('校验并保存草稿',async()=>{
+ if(!hostPolicySupported||!hostPolicySnapshot)throw Error('请先读取受支持的 Agent 和文件配置。');
+ const base=hostPolicySnapshot,values=hostPolicyCollect();if(!hostPolicyDifferences(base.values,values).length)throw Error('配置没有变化。');
+ await hostPolicyCheckTarget(hostPolicyTarget);
+ const draft=await hostPolicyRequest('remote/host-policy/drafts','POST',{revision:base.revision,values});hostPolicyCheckDraft(draft);
+ if(draft.status!=='draft_saved'||draft.base_sha256!==base.revision||draft.expected_version!==base.expected_version||hostPolicyDifferences(values,draft.values).length)throw Error('草稿回执与提交值或基线不一致。');
+ hostPolicySnapshot={...base,drafts:[draft,...base.drafts.filter(old=>old.id!==draft.id)]};hostPolicySelected=draft.id;hostPolicyRenderDrafts();hostPolicyRenderDiff();
+ $('hostPolicyHint').textContent='草稿已校验并保存：'+draft.id+'。尚未修改服务器文件，尚未重启或生效。';
+});
+$('hostPolicyApply').onclick=()=>hostPolicyRun('核对维护应用',async()=>{
+ const draft=hostPolicyCurrentDraft(),base=hostPolicySnapshot,target=hostPolicyTarget;
+ if(!hostPolicySupported||!hostPolicyDraftMatches(draft)||!base)throw Error('请选择基线一致的已保存草稿。');
+ if(pending)throw Error('上次任务提交尚未确认，请先使用原请求 ID 查询或重试。');
+ if(!state||!connected)throw Error('请先连接并读取服务器状态。');
+ if(!$('maintenance').checked)throw Error('请先在远端概览勾选维护影响确认。');
+ const current=await hostPolicyRequest('remote/status');state=current;
+ if(current.active||current.blocked)throw Error('远端任务执行中或等待恢复，不能应用。');
+ if(current.deployment?.current_version!==draft.expected_version)throw Error('部署版本已变化，请重新读取并保存草稿。');
+ const fresh=await hostPolicyRequest('remote/host-policy');
+ if(fresh.status!=='ok'||fresh.revision!==base.revision||fresh.release_identity_sha256!==base.release_identity_sha256||fresh.expected_version!==draft.expected_version||!Array.isArray(fresh.drafts))throw Error('文件或发行身份已变化，请重新读取。');
+ const confirmed=fresh.drafts.find(item=>item.id===draft.id);hostPolicyCheckDraft(confirmed);
+ if(confirmed.base_sha256!==draft.base_sha256||confirmed.candidate_sha256!==draft.candidate_sha256||confirmed.expected_version!==draft.expected_version||hostPolicyDifferences(confirmed.values,draft.values).length)throw Error('草稿身份或内容已变化。');
+ await hostPolicyCheckTarget(target);
+ const changes=hostPolicyDifferences(base.values,draft.values);if(!changes.length)throw Error('草稿没有参数变化。');
+ const diff=changes.map(change=>change.field.label+'：'+change.before+' → '+change.after+' '+change.field.unit).join('\n');
+ if(!confirm('维护应用会话策略？\n目标：'+JSON.parse(target)[0]+'\n部署版本：'+draft.expected_version+'\n草稿：'+draft.id+'\n候选 SHA256：'+draft.candidate_sha256+'\n\n'+diff+'\n\n可能结束现有对局。原服务运行时，应用后会重启；原服务停止时，应用并验证后保持停止。草稿保存本身没有生效。'))return;
+ const job={id:crypto.randomUUID().replaceAll('-',''),action:'host-policy',host_policy_draft:draft.id,maintenance:true,expected:draft.expected_version};
+ hostPolicyPendingTarget=target;sessionStorage.setItem('hostPolicyPendingTarget',target);
+ hostPolicySnapshot=null;hostPolicySelected='';$('hostPolicyDraft').replaceChildren(new Option('提交维护后请重新读取',''));hostPolicyRenderDiff();
+ await submit(job);
+ if(!pending){hostPolicyPendingTarget='';sessionStorage.removeItem('hostPolicyPendingTarget')}
+ $('hostPolicyHint').textContent=pending?'任务提交结果尚未确认，请使用“查询 / 重试上次提交”，保留原请求 ID；不要新建任务。':'维护任务已提交；请查看任务日志，完成后重新读取文件配置并核对重启结果。此页面不宣称已生效。';
+});
+for(const key of ['host','port','user','key'])$(key).addEventListener('input',hostPolicyInvalidateConnection);
+// Shared maintenance confirmation stays visible beside remote service operations.
+$('status').closest('section').append($('maintenance').parentElement);
+
+const advancedPanel=document.createElement('section');
+advancedPanel.innerHTML='<details><summary>高级维护：文件配置诊断与旧迁移</summary><p class="muted">Redis 尚未完成现场启用时，Lua 文件可能仍是玩法与经济的实际来源。保留文件只读诊断和已批准的旧迁移入口；日常参数修改使用 Redis 面板。下方旧迁移不执行 Redis 首次导入。</p><div id="advancedMaintenance"></div></details>';
+localPanel.parentNode.append(advancedPanel);
+const nativePanel=document.createElement('section');
+nativePanel.innerHTML='<h2>服务器配置文件（只读诊断）</h2><p>host.json 保存主机参数，修改后需维护重启。Redis 模式下，玩法与经济以 Redis 版本为权威，Lua 仅用于显式导入与导出；此处文件不能代表 Redis 当前值。files 模式仍使用服务器 Lua，普通部署保留现场文件。</p><button id="nativeRead">读取服务器文件</button><select id="nativeFile"><option>gameplay.lua</option><option>economy.lua</option><option>host.json</option></select><p id="nativePath"></p><textarea id="nativeText" rows="16" style="width:100%;background:#101721;color:#edf3fa" readonly></textarea><p id="nativeHint"></p>';
+$('advancedMaintenance').append(nativePanel);
+let nativeSnapshot=null,nativeChosen='gameplay.lua';
+$('nativeRead').onclick=async()=>{try{nativeSnapshot=await api('remote/native-config');nativeChosen=$('nativeFile').value;$('nativeText').value=nativeSnapshot.files[nativeChosen];$('nativePath').textContent=nativeSnapshot.path+' | 只读 | SHA256: '+nativeSnapshot.revision;$('nativeHint').textContent='已读取服务器实际文件（只读）。这些文件不是 Redis 版本的实时视图；部署预检按实际配置来源执行。'}catch(e){message(e.message)}};
+$('nativeFile').onchange=()=>{nativeChosen=$('nativeFile').value;$('nativeText').value=nativeSnapshot?.files[nativeChosen]||''};
+const migrationPanel=document.createElement('section');
+migrationPanel.innerHTML='<h2>旧配置与存档迁移（维护停服）</h2><p>导入已经审阅批准的旧迁移文件。此操作不同于 Redis 配置导入或配置版本回滚。旧存档完整保留，成功后仍保持停服；开始游戏需另行启动服务。操作前请在“远端概览”勾选维护影响确认。</p><input id="migrationFile" type="file" accept=".json"><button id="migrationImport">导入并执行离线迁移</button><p id="migrationHint"></p>';
+nativePanel.after(migrationPanel);
+$('migrationImport').onclick=async()=>{
+ const button=$('migrationImport');button.disabled=true;
+ try{
+  if(!connected||!state)throw Error('请先连接服务器');
+  if(state.active||state.blocked)throw Error('远端忙碌或有待恢复检查点');
+  if(!$('maintenance').checked)throw Error('请先勾选维护影响确认');
+  const capability=await api('remote/ping');if(capability.native_migration!=='offline-v1')throw Error('需要安装支持离线迁移的新版 Agent，单独更新脚本不够');
+  const file=$('migrationFile').files[0];if(!file||file.size>4*1024*1024)throw Error('请选择小于 4MiB 的迁移 JSON');
+  const bytes=await file.arrayBuffer(), request=JSON.parse(new TextDecoder().decode(bytes));
+  const jobs=await api('local-jobs');const build=jobs.find(j=>j.status==='succeeded'&&j.artifact===request.artifact_sha256);if(!build)throw Error('找不到迁移文件指定的本地成功制品，请先构建对应包');
+  if(!confirm('目标：'+$('host').value+'\n批准记录：'+request.approval_ref+'\n将安装候选配置并归档旧数据代际，旧会话需重新入场。服务器必须已停服并关闭新入场，成功后保持停服。继续？'))return;
+  const expected=state.deployment?.current_version||'';
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+  $('migrationHint').textContent='正在上传候选及其指定制品…';
+  const response=await fetch('/api/remote/migrations?sha256='+hash,{method:'PUT',headers:{'X-CICD-Token':token,'Content-Type':'application/json'},body:bytes});const result=await response.json();if(!response.ok)throw Error(result.error||'导入失败');
+  const uploaded=await api('upload-local','POST',{id:build.id});if(uploaded.artifact!==request.artifact_sha256)throw Error('上传制品身份变化');
+  await submit({id:crypto.randomUUID().replaceAll('-',''),action:'migration',artifact:uploaded.artifact,migration:hash,maintenance:true,expected,commit:''});
+  $('migrationHint').textContent='已提交离线迁移，请查看任务日志；此操作不会启动游戏。';
+ }catch(e){message(e.message);$('migrationHint').textContent=e.message}finally{button.disabled=false}
+};
+// Redis configuration is an explicit operator workflow; no timer reads or publishes it.
+const redisStyle=document.createElement('style');
+redisStyle.textContent=`
+#redisConfigPanel{border-color:#427967}
+#redisConfigPanel .redis-source{white-space:pre-wrap;overflow-wrap:anywhere}
+#redisConfigPanel .metric b{font:13px/1.6 Consolas,monospace;overflow-wrap:anywhere}
+#redisConfigPanel fieldset{border:1px solid var(--line);border-radius:9px;margin:18px 0;padding:16px;min-width:0}
+#redisConfigPanel legend{padding:0 8px;font-weight:600}
+#redisConfigPanel .redis-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 20px}
+#redisConfigPanel .redis-field{min-width:0}
+#redisConfigPanel .redis-field label{margin-top:0;color:var(--text)}
+#redisConfigPanel .redis-wide{grid-column:1/-1}
+#redisConfigPanel textarea,#redisConfigPanel select{width:100%;background:#101721;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:10px}
+#redisConfigPanel textarea{font:12px/1.6 Consolas,monospace;resize:vertical}
+#redisConfigPanel .redis-description{display:block;margin-top:5px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+#redisConfigPanel .redis-path{font:11px/1.6 Consolas,monospace;overflow-wrap:anywhere}
+#redisConfigPanel .redis-table{overflow:auto}
+#redisConfigPanel table{table-layout:fixed;min-width:510px}
+#redisConfigPanel th:first-child{width:24%}
+#redisConfigPanel td{vertical-align:top;overflow-wrap:anywhere}
+#redisConfigPanel td pre{margin:0;padding:8px;max-height:240px;white-space:pre-wrap;overflow-wrap:anywhere}
+#redisConfigPanel .redis-readonly{margin:0;padding:10px;max-height:220px}
+#redisConfigPanel [aria-live]{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:1050px){#redisConfigPanel .redis-fields{grid-template-columns:minmax(0,1fr)}}`;
+document.head.append(redisStyle);
+const redisPanel=document.createElement('section');
+redisPanel.id='redisConfigPanel';
+redisPanel.innerHTML=`
+<h2>Redis 玩法与经济配置</h2>
+<p>读取当前版本，编辑并保存草稿，核对差异后校验和发布。Redis 模式下，发布的配置只供之后创建的新局使用；已有对局继续使用建局时冻结的配置。</p>
+<div class="notice redis-source" id="redisSource">尚未读取配置的来源。此面板不会重启服务或切换配置来源；运行中宿主实际接受的版本以宿主日志和房间目录为准。</div>
+<button id="redisRead" class="primary">读取当前配置</button>
+<p class="muted">首次接入须先部署匹配的 Redis 管理工具，并从已核对的现场配置完成显式导入；没有当前版本时不会使用模板填充。</p>
+<div class="cards">
+ <div class="metric">最近读取的 Redis 当前版本<b id="redisActiveID">—</b></div>
+ <div class="metric"><span id="redisCandidateLabel">待发布草稿版本</span><b id="redisCandidateID">未保存草稿</b></div>
+</div>
+<details><summary>版本元数据（只读）</summary><pre id="redisMetadata">读取后显示版本、SHA256、DLL SHA256 与结构版本。</pre></details>
+<p id="redisMode" class="muted">请先连接服务器并读取当前配置。</p>
+<fieldset id="redisGameplay" hidden><legend>玩法参数</legend><div class="redis-fields" id="redisGameplayFields"></div></fieldset>
+<fieldset id="redisEconomy" hidden><legend>经济参数</legend><div class="redis-fields" id="redisEconomyFields"></div></fieldset>
+<button id="redisDraftSave">保存草稿</button>
+<p class="muted">保存草稿不会激活。再次编辑会取消该草稿在页面中的校验与发布资格；JSON 编辑保留原始文本，由服务器校验结构和数值。</p>
+<h3>变更前后</h3>
+<p id="redisDiffHint" class="muted">读取并编辑后显示差异。</p>
+<div class="redis-table"><table><thead><tr><th>参数</th><th>当前版本</th><th>待发布版本</th></tr></thead><tbody id="redisDiff"></tbody></table></div>
+<p id="redisValidation" aria-live="polite">尚未校验。</p>
+<button id="redisValidate">校验待发布版本</button>
+<button id="redisPublish" class="primary">发布草稿，仅新局生效</button>
+<details id="redisHistoryDetails"><summary>历史版本与配置回滚</summary>
+ <p class="muted">配置回滚将选定版本重新激活，已有对局保持冻结值。它不会回滚服务程序，也不会重启服务。先读取历史，再预览差异并校验。</p>
+ <button id="redisHistoryRead">读取配置版本历史</button>
+ <label for="redisHistorySelect">选择历史版本</label><select id="redisHistorySelect"><option value="">请先读取版本历史</option></select>
+ <button id="redisHistoryPreview">预览选定版本与差异</button>
+ <p id="redisHistoryHint" class="muted"></p>
+</details>
+<p id="redisHint" aria-live="polite">所有配置操作均需点击按钮执行。</p>`;
+$('status').closest('section').after(redisPanel);
+redisPanel.after(localPanel);
+let redisEpoch=0,redisWorking=false,redisNeedReconnect=true,redisStale=true;
+let redisActiveID='',redisSource='',redisCurrentVersion=null,redisCandidate=null,redisValidated=null;
+let redisMode='edit',redisDirty=false,redisDiffReady=false,redisControls=[],redisChanges=[];
+
+function redisVersionOK(version){
+ return version&&/^[a-f0-9]{32}$/.test(version.id)&&/^[a-f0-9]{64}$/.test(version.sha256)&&/^[a-f0-9]{64}$/.test(version.dll_sha256);
+}
+function redisSameVersion(left,right){return !!left&&!!right&&left.id===right.id&&left.sha256===right.sha256}
+function redisCanPublish(){
+ return !redisStale&&!redisDirty&&redisDiffReady&&redisSameVersion(redisCandidate,redisValidated)&&redisCandidate.id!==redisActiveID;
+}
+function redisUpdateControls(){
+ if(!$('redisConfigPanel'))return;
+ const unavailable=redisWorking||hostAdminWorking||hostPolicyWorking||!connected||redisNeedReconnect;
+ $('redisRead').disabled=unavailable;
+ $('redisHistoryRead').disabled=unavailable;
+ $('redisDraftSave').disabled=unavailable||redisStale||redisMode!=='edit'||!redisDirty;
+ $('redisValidate').disabled=unavailable||redisStale||redisDirty||!redisCandidate||!redisDiffReady;
+ $('redisPublish').disabled=unavailable||!redisCanPublish();
+ $('redisHistorySelect').disabled=unavailable||$('redisHistorySelect').options.length<2;
+ $('redisHistoryPreview').disabled=unavailable||redisStale||!redisActiveID||!$('redisHistorySelect').value;
+ $('redisGameplay').disabled=unavailable||redisStale||redisMode==='rollback';
+ $('redisEconomy').disabled=unavailable||redisStale||redisMode==='rollback';
+ $('redisPublish').textContent=redisMode==='rollback'?'回滚配置版本，仅新局生效':'发布草稿，仅新局生效';
+ $('redisCandidateLabel').textContent=redisMode==='rollback'?'待回滚配置版本':'待发布草稿版本';
+ $('redisActiveID').textContent=redisActiveID||'—';
+ $('redisCandidateID').textContent=redisCandidate?.id||(redisDirty?'有未保存修改':'未选择待发布版本');
+ const metadata={};
+ if(redisCurrentVersion)metadata.current=redisCurrentVersion;
+ if(redisCandidate)metadata[redisMode==='rollback'?'rollback':'draft']=redisCandidate;
+ $('redisMetadata').textContent=Object.keys(metadata).length?JSON.stringify(metadata,null,2):'尚未读取版本元数据。';
+}
+function redisInvalidateConnection(){
+ if(!$('redisConfigPanel'))return;
+ hostAdminInvalidateConnection();
+ hostPolicyInvalidateConnection();
+ redisEpoch++;redisNeedReconnect=true;redisStale=true;redisValidated=null;redisCandidate=null;redisDirty=false;
+ redisActiveID='';redisCurrentVersion=null;redisSource='';redisControls=[];redisMode='edit';
+ $('redisGameplayFields').replaceChildren();$('redisEconomyFields').replaceChildren();
+ $('redisGameplay').hidden=true;$('redisEconomy').hidden=true;
+ $('redisHistorySelect').replaceChildren(new Option('请重新读取版本历史',''));
+ $('redisHistoryHint').textContent='';
+ redisRenderDiff([],false,'连接已变更或失效，先连接并重新读取当前配置。');
+ $('redisSource').textContent='配置来源尚未确认。连接恢复后须重新读取。';
+ $('redisMode').textContent='连接变更已清除页面草稿与发布资格；Redis 中已保存的版本不会被删除。';
+ $('redisValidation').textContent='尚未校验。';
+ $('redisHint').textContent='请先连接服务器，再读取当前配置。';
+ redisUpdateControls();
+}
+function redisConnectionReady(){
+ redisNeedReconnect=false;
+ hostAdminConnectionReady();
+ hostPolicyConnectionReady();
+ $('redisHint').textContent='管理连接正常；点击“读取当前配置”建立编辑基线。';
+ redisUpdateControls();
+}
+function redisConflict(message){const error=Error(message);error.code='configuration_conflict';return error}
+async function redisRun(action,work){
+ if(redisWorking||hostAdminWorking||hostPolicyWorking)return;
+ if(!connected||redisNeedReconnect){$('redisHint').textContent='请先连接服务器。';return}
+ const epoch=redisEpoch;
+ redisWorking=true;redisUpdateControls();hostAdminUpdateControls();hostPolicyUpdateControls();$('redisHint').textContent=action+'中…';
+ const request=async(path='',method='GET',body)=>{
+  const result=await api('remote/redis-config'+path,method,body);
+  if(epoch!==redisEpoch||!$('redisConfigPanel')){const error=Error('连接上下文已改变');error.code='local_context_changed';throw error}
+  return result;
+ };
+ try{await work(request)}catch(error){
+  if(epoch===redisEpoch&&$('redisConfigPanel')){
+   redisValidated=null;
+   $('redisValidation').textContent='校验资格已清除，发布保持禁用。';
+   if(error.code==='configuration_conflict'){
+    redisStale=true;
+    $('redisHint').textContent='当前版本已变化：'+error.message+'。请重新读取当前配置，再基于新版本编辑或选择回滚；不会自动覆盖或重试。';
+   }else if(action==='发布配置'){
+    redisStale=true;
+    $('redisHint').textContent='发布结果需核对：'+error.message+'。请重新读取当前版本确认是否已生效，勿直接重复发布。';
+   }else $('redisHint').textContent=action+'失败：'+error.message;
+  }
+ }finally{redisWorking=false;redisUpdateControls();hostAdminUpdateControls();hostPolicyUpdateControls()}
+}
+function redisCheckView(result){
+ if(result.status!=='ok'||!redisVersionOK(result.view?.version)||!Array.isArray(result.view.fields))throw Error('返回的配置视图不完整，不能编辑。');
+ if(!['files','redis'].includes(result.configuration_source))throw Error('未识别配置的来源，不能发布。');
+ const paths=new Set();
+ for(const field of result.view.fields){
+  if(typeof field.path!=='string'||!field.path||paths.has(field.path)||typeof field.value_json!=='string'||!['gameplay','economy'].includes(field.group)||!['integer','boolean','string','json'].includes(field.type)||typeof field.read_only!=='boolean')throw Error('配置字段元数据不完整，不能编辑。');
+  paths.add(field.path);
+ }
+}
+function redisShowSource(source){
+ $('redisSource').textContent=source==='files'
+  ?'配置的来源：files（服务器 Lua）。向 Redis 发布只更新 Redis 版本，不会自动切换正在运行服务的配置来源。启用 Redis 来源须通过部署流程显式配置。这里显示的是配置值，运行中宿主实际接受的版本以宿主日志和房间目录为准。'
+  :'配置的来源：Redis。发布只表示 Redis 当前指针已切换；宿主接纳后创建的新局使用新配置，已有对局保持冻结值。这里显示的是配置值，运行中宿主实际接受的版本以宿主日志和房间目录为准。';
+}
+function redisControlValue(entry){
+ if(entry.field.type==='boolean')return entry.control.checked?'true':'false';
+ if(entry.field.type==='string')return JSON.stringify(entry.control.value);
+ return entry.field.type==='integer'?entry.control.value.trim():entry.control.value;
+}
+function redisCollectChanges(checkIntegers=false){
+ const changes=[];
+ for(const entry of redisControls){
+  const value=redisControlValue(entry);
+  if(value===entry.original)continue;
+  if(checkIntegers&&entry.field.type==='integer'&&!/^-?(0|[1-9][0-9]*)$/.test(value))throw Error((entry.field.label||entry.field.path)+'：请输入完整整数，不使用小数或科学计数法。');
+  changes.push({path:entry.field.path,label:entry.field.label||entry.field.path,before_json:entry.original,after_json:value});
+ }
+ return changes;
+}
+function redisEdited(){
+ redisCandidate=null;redisValidated=null;
+ const changes=redisCollectChanges();redisDirty=changes.length>0;
+ redisRenderDiff(changes,false,redisDirty?'本地编辑差异；保存草稿后由服务器返回核对结果。':'与读取时的当前版本一致。');
+ $('redisValidation').textContent='编辑后须重新保存草稿并校验。';
+ $('redisHint').textContent=redisDirty?'有未保存修改；Redis 当前版本尚未改变。':'修改已还原，Redis 当前版本尚未改变。';
+ redisUpdateControls();
+}
+function redisRenderFields(fields,readOnly){
+ redisControls=[];
+ $('redisGameplayFields').replaceChildren();$('redisEconomyFields').replaceChildren();
+ for(const field of fields){
+  const box=document.createElement('div');box.className='redis-field'+(field.type==='json'?' redis-wide':'');
+  const label=document.createElement('label');label.textContent=(field.label||field.path)+(field.unit?'（'+field.unit+'）':'')+(field.read_only?' · 只读':'');
+  const path=document.createElement('div');path.className='muted redis-path';path.textContent=field.path;
+  box.append(label,path);
+  if(readOnly||field.read_only){
+   const value=document.createElement('pre');value.className='redis-readonly';value.textContent=field.value_json;box.append(value);
+  }else{
+   const control=document.createElement(field.type==='json'?'textarea':'input');
+   control.id='redisField'+redisControls.length;label.htmlFor=control.id;
+   let original=field.value_json;
+   if(field.type==='boolean'){
+    original=original.trim();if(!['true','false'].includes(original))throw Error('布尔字段格式无效：'+field.path);
+    control.type='checkbox';control.checked=original==='true';
+   }else if(field.type==='string'){
+    const value=JSON.parse(original);if(typeof value!=='string')throw Error('文本字段格式无效：'+field.path);
+    control.type='text';control.value=value;original=JSON.stringify(value);
+   }else if(field.type==='integer'){
+    original=original.trim();control.type='text';control.inputMode='numeric';control.value=original;control.autocomplete='off';
+   }else{control.rows=8;control.spellcheck=false;control.value=original}
+   control.addEventListener('input',redisEdited);box.append(control);
+   redisControls.push({field,control,original});
+  }
+  if(field.description||field.type==='json'){
+   const description=document.createElement('small');description.className='muted redis-description';
+   description.textContent=(field.description||'')+(field.type==='json'?'\n数组或对象：保留原有结构与字段名，保存后使用服务器校验。':'');box.append(description);
+  }
+  $(field.group==='gameplay'?'redisGameplayFields':'redisEconomyFields').append(box);
+ }
+ $('redisGameplay').hidden=!$('redisGameplayFields').childElementCount;
+ $('redisEconomy').hidden=!$('redisEconomyFields').childElementCount;
+}
+function redisRenderDiff(changes,confirmed,hint){
+ if(!Array.isArray(changes))throw Error('缺少配置差异。');
+ $('redisDiff').replaceChildren();
+ for(const change of changes){
+  if(typeof change.path!=='string'||typeof change.before_json!=='string'||typeof change.after_json!=='string')throw Error('返回的配置差异不完整。');
+  const row=document.createElement('tr'),name=document.createElement('td');
+  name.textContent=change.label||change.path;
+  const path=document.createElement('div');path.className='muted redis-path';path.textContent=change.path;name.append(path);row.append(name);
+  for(const value of [change.before_json,change.after_json]){const cell=document.createElement('td'),pre=document.createElement('pre');pre.textContent=value;cell.append(pre);row.append(cell)}
+  $('redisDiff').append(row);
+ }
+ redisChanges=changes;redisDiffReady=confirmed;
+ $('redisDiffHint').textContent=hint+(changes.length?' 共 '+changes.length+' 项。':' 无参数差异。');
+}
+$('redisRead').onclick=()=>{
+ if((redisDirty||redisCandidate)&&!confirm('重新读取将放弃页面中的编辑和待发布选择。Redis 中已保存的草稿版本会保留。继续？'))return;
+ redisRun('读取当前配置',async request=>{
+  redisStale=true;redisCandidate=null;redisValidated=null;redisDirty=false;redisDiffReady=false;
+  const result=await request();redisCheckView(result);
+  if(!result.active_configuration_id||result.view.version.id!==result.active_configuration_id)throw Error('没有一致的 Redis 当前版本；请先完成现场配置的显式导入，或重新读取。');
+  redisRenderFields(result.view.fields,false);
+  redisActiveID=result.active_configuration_id;redisCurrentVersion=result.view.version;redisSource=result.configuration_source;
+  redisMode='edit';redisStale=false;redisShowSource(redisSource);
+  redisRenderDiff([],false,'编辑基线为上方 Redis 当前版本。');
+  $('redisMode').textContent='正在编辑当前版本的副本；字段修改不会直接写入 Redis。';
+  $('redisValidation').textContent='尚未保存和校验草稿。';
+  $('redisHint').textContent='已读取当前版本。修改所需参数后保存草稿。';
+ });
+};
+$('redisDraftSave').onclick=()=>redisRun('保存草稿',async request=>{
+ if(redisStale||redisMode!=='edit'||!redisDirty)throw Error('请先读取当前版本并修改参数。');
+ const changes=redisCollectChanges(true);if(!changes.length)throw Error('没有需要保存的修改。');
+ redisCandidate=null;redisValidated=null;redisDiffReady=false;
+ const result=await request('/draft','POST',{base_version_id:redisActiveID,changes:changes.map(change=>({path:change.path,value_json:change.after_json}))});
+ if(result.status!=='draft_saved'||!redisVersionOK(result.version)||result.base_version_id!==redisActiveID||result.version.base_version_id!==redisActiveID)throw Error('草稿身份或基线不匹配，请重新读取当前配置。');
+ redisRenderDiff(result.changes,true,'服务器已保存草稿；请核对以下变更，再执行校验。');
+ redisCandidate=result.version;redisDirty=false;
+ $('redisValidation').textContent='草稿已保存，尚未校验。';
+ $('redisHint').textContent='草稿已保存，当前版本未改变。任何后续编辑都需要重新保存和校验。';
+});
+$('redisValidate').onclick=()=>redisRun('校验配置',async request=>{
+ if(redisStale||redisDirty||!redisCandidate||!redisDiffReady)throw Error('请先保存草稿，或预览历史版本及差异。');
+ const candidate=redisCandidate;redisValidated=null;
+ const result=await request('/validate','POST',{version_id:candidate.id});
+ if(result.status!=='validated'||result.validated!==true||!redisSameVersion(result.version,candidate))throw Error('校验未返回相同版本与 SHA256，不能发布。');
+ redisValidated={id:candidate.id,sha256:candidate.sha256};
+ $('redisValidation').textContent='校验通过：'+candidate.id+'\nSHA256：'+candidate.sha256+'\n仅此版本具备页面发布资格；发布时服务器仍会再次校验。';
+ $('redisHint').textContent='请核对差异后点击'+(redisMode==='rollback'?'回滚':'发布')+'。已有对局保持原配置。';
+});
+$('redisPublish').onclick=()=>{
+ if(!redisCanPublish()||redisWorking)return;
+ const candidate=redisCandidate,expected=redisActiveID,rollback=redisMode==='rollback';
+ const sourceNote=redisSource==='files'?'配置的来源为 files：此次仅更新 Redis，不切换正在运行服务的来源。':'宿主接纳后创建的新局采用新配置，已有对局保持原配置。';
+ if(!confirm('在当前已连接的服务器'+(rollback?'回滚配置':'发布草稿')+'？\n当前：'+expected+'\n目标：'+candidate.id+'\nSHA256：'+candidate.sha256+'\n已展示 '+redisChanges.length+' 项参数差异，请确认已核对。\n'+sourceNote+'\n此操作不重启服务。'))return;
+ redisRun('发布配置',async request=>{
+  if(!redisCanPublish()||!redisSameVersion(candidate,redisCandidate)||expected!==redisActiveID)throw Error('待发布内容已变化，请重新读取和校验。');
+  const result=await request('/publish','POST',{version_id:candidate.id,expected_active_id:expected,rollback});
+  if(result.status!=='published'||!redisSameVersion(result.version,candidate))throw Error('发布响应身份不匹配。');
+  redisActiveID=candidate.id;redisCurrentVersion=result.version;redisCandidate=null;redisValidated=null;redisDirty=false;redisStale=true;
+  $('redisMode').textContent='发布请求已成功。表单保留刚才的预览，请重新读取当前配置后继续编辑。';
+  $('redisValidation').textContent='本次发布已完成；继续操作须重新读取并校验。';
+  $('redisHint').textContent=(rollback?'配置回滚':'草稿发布')+'成功：'+candidate.id+'。'+sourceNote+' 点击“读取当前配置”核对最新状态；此结果不表示宿主已完成接纳。';
+ });
+};
+$('redisHistoryRead').onclick=()=>redisRun('读取版本历史',async request=>{
+ const result=await request('/history');if(result.status!=='ok'||!Array.isArray(result.versions))throw Error('历史版本列表格式不完整。');
+ const select=$('redisHistorySelect');select.replaceChildren(new Option('请选择历史版本',''));
+ for(const version of result.versions){if(!redisVersionOK(version))throw Error('历史版本身份不完整。');const option=document.createElement('option');option.value=version.id;option.textContent=version.id+(version.id===redisActiveID?' · 最近读取的当前版':'')+' · SHA256 '+version.sha256.slice(0,12);select.append(option)}
+ $('redisHistoryDetails').open=true;
+ $('redisHistoryHint').textContent='已读取 '+result.versions.length+' 个版本；选择后点击预览。列表包含已保存版本，不表示每个版本都曾激活。';
+ $('redisHint').textContent='历史列表已读取，尚未改变当前版本或待发布选择。';
+});
+$('redisHistorySelect').onchange=()=>{
+ if(redisMode==='rollback'){
+  redisCandidate=null;redisValidated=null;redisDiffReady=false;
+  $('redisValidation').textContent='历史选择已改变，须重新预览并校验。';
+  $('redisMode').textContent='下方字段仍是上次预览；点击“预览选定版本与差异”读取所选版本。';
+ }
+ redisUpdateControls();
+};
+$('redisHistoryPreview').onclick=()=>{
+ const id=$('redisHistorySelect').value;if(!id)return;
+ if((redisDirty||redisCandidate)&&!confirm('预览历史版本将放弃页面中的编辑和待发布选择。已保存版本会保留。继续？'))return;
+ redisRun('预览历史版本',async request=>{
+  if(redisStale||!redisActiveID)throw Error('请先读取当前配置作为回滚基线。');
+  redisCandidate=null;redisValidated=null;redisDiffReady=false;
+  const result=await request('/version?id='+encodeURIComponent(id));redisCheckView(result);
+  if(result.active_configuration_id!==redisActiveID)throw redisConflict('预览期间 Redis 当前版本已被其他操作更新');
+  if(result.view.version.id!==id)throw Error('历史版本身份不匹配。');
+  const diff=await request('/diff?base='+encodeURIComponent(redisActiveID)+'&version='+encodeURIComponent(id));
+  if(diff.status!=='ok')throw Error('未能读取历史版本差异。');
+  redisRenderFields(result.view.fields,true);redisRenderDiff(diff.changes,true,'与读取时的 Redis 当前版本比较；历史配置只读。');
+  redisSource=result.configuration_source;redisShowSource(redisSource);redisMode='rollback';redisCandidate=result.view.version;redisDirty=false;
+  $('redisMode').textContent='正在只读预览历史版本 '+id+'。返回编辑请点击“读取当前配置”。';
+  $('redisValidation').textContent='历史版本尚未校验；回滚前必须校验。';
+  $('redisHint').textContent=id===redisActiveID?'选定版本就是当前版本，无需回滚。':'已读取历史配置与差异，尚未回滚。核对后执行校验。';
+ });
+};
+redisUpdateControls();
+// Live administration reads the owning host. Redis directories remain observations.
+const hostAdminStyle=document.createElement('style');
+hostAdminStyle.textContent=`
+#hostAdminPanel{border-color:#526b8c}
+#hostAdminPanel .metric b{font:13px/1.6 Consolas,monospace;overflow-wrap:anywhere}
+#hostAdminPanel .host-table{overflow:auto}
+#hostAdminPanel table{min-width:680px}
+#hostAdminPanel td{vertical-align:top;overflow-wrap:anywhere}
+#hostAdminPanel .host-identity{display:block;font:11px/1.6 Consolas,monospace;overflow-wrap:anywhere;max-width:270px}
+#hostAdminPanel .host-player{padding:5px 0;border-bottom:1px solid var(--line)}
+#hostAdminPanel .host-time{display:block;font-size:12px;color:var(--muted)}
+#hostAdminPanel [aria-live]{white-space:pre-wrap;overflow-wrap:anywhere}
+#hostAdminPanel .host-actions{white-space:nowrap}
+#hostAdminPanel .host-result{background:#101721;padding:12px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}`;
+document.head.append(hostAdminStyle);
+const hostAdminPanel=document.createElement('section');hostAdminPanel.id='hostAdminPanel';
+hostAdminPanel.innerHTML=`
+<h2>房间与会话管理</h2>
+<p>直接读取当前运行宿主，查看房间和姓名占用。读取不续租、不改变状态；定向关闭与终止均需确认具体实例和目标，不按姓名批量清理。</p>
+<button id="hostAdminRead" class="primary">读取房间与会话</button>
+<div class="cards" style="margin-top:14px">
+ <div class="metric">宿主实例 ID<b id="hostAdminInstance">尚未读取</b></div>
+ <div class="metric">最近读取时间（本机）<b id="hostAdminObserved">—</b></div>
+</div>
+<p id="hostAdminFreshness" class="muted">管理器与游戏制品需包含匹配的受控管理入口；没有数据时不能解释为零房间。</p>
+<h3>房间</h3>
+<p id="hostAdminRoomCount" class="muted">尚未读取。</p>
+<div class="host-table"><table><thead><tr><th>房间与配置</th><th>阶段 / 轮次</th><th>参与身份与控制状态</th><th>定向操作</th></tr></thead><tbody id="hostAdminRooms"></tbody></table></div>
+<button id="hostAdminRoomsPrev">上一页房间</button><button id="hostAdminRoomsNext">下一页房间</button>
+<h3>会话与姓名占用</h3>
+<label for="hostAdminName">按玩家名精确查询（仅诊断）</label>
+<input id="hostAdminName" maxlength="256" autocomplete="off" placeholder="输入需要排查的玩家名">
+<button id="hostAdminDiagnose">查询姓名占用</button>
+<p id="hostAdminSessionCount" class="muted">尚未读取。</p>
+<div class="host-table"><table><thead><tr><th>玩家与登记身份</th><th>会话状态 / 时间</th><th>房间 / 队列票据</th><th>定向操作</th></tr></thead><tbody id="hostAdminSessions"></tbody></table></div>
+<button id="hostAdminSessionsPrev">上一页会话</button><button id="hostAdminSessionsNext">下一页会话</button>
+<p id="hostAdminHint" aria-live="polite">请先连接服务器，再显式读取宿主状态。</p>
+<div id="hostAdminRequestResult" class="host-result" hidden aria-live="polite"></div>
+<p class="muted">关闭会话会撤销该次登记的凭据和控制权，其他玩家按服务器规则继续；终止房间会结束该房间并记录管理终止原因。已提交的事实不回滚。若只返回“已受理”，须重新读取确认清理结果。</p>`;
+redisPanel.before(hostAdminPanel);
+let hostAdminEpoch=0,hostAdminNeedReconnect=true,hostAdminFresh=false,hostAdminInstance='';
+let hostAdminRooms=[],hostAdminSessions=[],hostAdminRoomPage=0,hostAdminSessionPage=0,hostAdminNameFilter='';
+let hostAdminLastRequest=null,hostAdminRoomsReadAt='',hostAdminSessionsReadAt='';
+const hostAdminPageSize=50;
+const hostAdminStateLabels={pending:'待确认登记',active:'有效',closing:'关闭处理中',closed:'已关闭',expired:'已过期',suspected:'疑似失联',offline:'失联',registered:'正式登记',experimental:'实验会话',legacy:'旧入口',controlled:'真人控制',human:'真人控制',spectator:'观战',ai:'AI接管',ai_takeover:'AI接管',released:'已释放',terminal:'已终局'};
+function hostAdminID(value){return typeof value==='string'&&/^[a-f0-9]{32}$/.test(value)}
+function hostAdminLabel(value){return hostAdminStateLabels[value]||String(value??'—')}
+function hostAdminTime(value){
+ if(typeof value!=='number'||!Number.isFinite(value)||value<=0)return '—';
+ const date=new Date(value);return Number.isNaN(date.getTime())?'—':date.toLocaleString();
+}
+function hostAdminText(parent,value,className=''){
+ const element=document.createElement('span');element.textContent=String(value??'—');
+ if(className)element.className=className;parent.append(element);return element;
+}
+function hostAdminUpdateControls(){
+ if(!$('hostAdminPanel'))return;
+ const unavailable=hostAdminWorking||redisWorking||hostPolicyWorking||!connected||hostAdminNeedReconnect;
+ $('hostAdminRead').disabled=unavailable;$('hostAdminDiagnose').disabled=unavailable;
+ $('hostAdminName').disabled=unavailable;
+ $('hostAdminRoomsPrev').disabled=unavailable||hostAdminRoomPage===0;
+ $('hostAdminRoomsNext').disabled=unavailable||(hostAdminRoomPage+1)*hostAdminPageSize>=hostAdminRooms.length;
+ $('hostAdminSessionsPrev').disabled=unavailable||hostAdminSessionPage===0;
+ $('hostAdminSessionsNext').disabled=unavailable||(hostAdminSessionPage+1)*hostAdminPageSize>=hostAdminSessions.length;
+ hostAdminPanel.querySelectorAll('[data-host-write]').forEach(button=>button.disabled=unavailable||!hostAdminFresh||button.dataset.hostAllowed!=='yes');
+}
+function hostAdminStoreReceipt(){
+ try{sessionStorage.setItem('hostAdminLastRequest',JSON.stringify(hostAdminLastRequest))}catch{}
+ hostAdminRenderReceipt();
+}
+function hostAdminRenderReceipt(){
+ const box=$('hostAdminRequestResult');if(!box)return;
+ box.hidden=!hostAdminLastRequest;if(!hostAdminLastRequest)return;
+ const item=hostAdminLastRequest;
+ const status={sending:'发送中',accepted:'已受理，尚待核对完成状态',completed:'宿主已确认完成',unknown:'结果未确认，请先读取状态'}[item.status]||'历史请求，请重新核对状态';
+ box.textContent='上次定向操作：'+(item.action==='revoke_session'?'关闭会话':'终止房间')+' · '+status+'\n实例：'+item.expected_instance_id+'\n目标：'+item.target_id+(item.ingress?' · '+hostAdminLabel(item.ingress):'')+'\n请求 ID：'+item.request_id+'\n此记录不自动重发；发生断线或重启时，请用原请求 ID 和目标身份核对宿主日志。';
+}
+function hostAdminInvalidateConnection(){
+ if(!$('hostAdminPanel'))return;
+ hostAdminEpoch++;hostAdminNeedReconnect=true;hostAdminFresh=false;hostAdminInstance='';
+ hostAdminRooms=[];hostAdminSessions=[];hostAdminRoomPage=0;hostAdminSessionPage=0;hostAdminNameFilter='';
+ hostAdminRoomsReadAt='';hostAdminSessionsReadAt='';
+ $('hostAdminName').value='';$('hostAdminInstance').textContent='尚未读取';$('hostAdminObserved').textContent='—';
+ $('hostAdminFreshness').textContent='连接变更或失效，旧实例的操作入口已关闭。重新连接并读取后再操作。';
+ $('hostAdminHint').textContent='请先连接服务器，再读取房间与会话。';
+ if(hostAdminLastRequest?.status==='sending'){hostAdminLastRequest.status='unknown';hostAdminStoreReceipt()}
+ hostAdminRenderRooms();hostAdminRenderSessions();hostAdminUpdateControls();
+}
+function hostAdminConnectionReady(){
+ if(!$('hostAdminPanel'))return;
+ hostAdminNeedReconnect=false;$('hostAdminHint').textContent='管理连接正常；点击“读取房间与会话”取得当前宿主状态。';hostAdminUpdateControls();
+}
+async function hostAdminRun(label,work,write=false){
+ if(hostAdminWorking||redisWorking||hostPolicyWorking)return;
+ if(!connected||hostAdminNeedReconnect){$('hostAdminHint').textContent='请先连接服务器。';return}
+ const epoch=hostAdminEpoch;
+ hostAdminWorking=true;hostAdminUpdateControls();redisUpdateControls();hostPolicyUpdateControls();$('hostAdminHint').textContent=label+'中…';
+ const request=async(path,method='GET',body)=>{
+  const result=await api('remote/host-admin'+path,method,body);
+  if(epoch!==hostAdminEpoch||!$('hostAdminPanel'))throw Error('连接已变更，不能采用旧请求结果');
+  return result;
+ };
+ try{await work(request)}catch(error){
+  if(epoch===hostAdminEpoch&&$('hostAdminPanel')){
+   hostAdminFresh=false;
+   $('hostAdminFreshness').textContent='本次请求未取得可用状态。下方旧快照仅供参考，定向操作已禁用。';
+   $('hostAdminHint').textContent=label+'未确认完成：'+error.message+(write?'。请保留请求 ID，重新读取核对，不要盲目重试。':'。请核对Agent、游戏制品和运行宿主，随后重新读取。');
+  }
+  if(write&&hostAdminLastRequest?.status==='sending'){hostAdminLastRequest.status='unknown';hostAdminStoreReceipt()}
+ }finally{hostAdminWorking=false;hostAdminUpdateControls();redisUpdateControls();hostPolicyUpdateControls()}
+}
+function hostAdminAcceptInstance(result){
+ if(result.status!=='ok'||!hostAdminID(result.instance_id))throw Error('宿主实例身份或返回状态无效');
+ if(hostAdminInstance&&hostAdminInstance!==result.instance_id){
+  hostAdminRooms=[];hostAdminSessions=[];hostAdminRoomPage=0;hostAdminSessionPage=0;
+  hostAdminRoomsReadAt='';hostAdminSessionsReadAt='';hostAdminNameFilter='';
+ }
+ hostAdminInstance=result.instance_id;
+ $('hostAdminInstance').textContent=hostAdminInstance;
+ $('hostAdminObserved').textContent=new Date().toLocaleString();
+}
+function hostAdminCheckSessions(sessions){
+ if(!Array.isArray(sessions))throw Error('缺少会话列表，不能解释为无占用');
+ for(const session of sessions){
+  if(!session||typeof session.player_name!=='string'||!hostAdminID(session.registration_id)||!['registered','experimental'].includes(session.ingress)||typeof session.state!=='string')throw Error('会话列表包含不完整的身份');
+ }
+}
+function hostAdminCheckRooms(rooms){
+ if(!Array.isArray(rooms))throw Error('缺少房间列表，不能解释为零房间');
+ for(const room of rooms){
+  if(!room||!hostAdminID(room.room_id)||typeof room.phase!=='string'||typeof room.terminal!=='boolean'||!Array.isArray(room.players))throw Error('房间列表包含不完整的身份或状态');
+  for(const player of room.players){if(!player||typeof player.player_name!=='string')throw Error('房间参与身份格式无效')}
+ }
+}
+function hostAdminRenderRooms(){
+ const rows=$('hostAdminRooms');rows.replaceChildren();
+ const start=hostAdminRoomPage*hostAdminPageSize,shown=hostAdminRooms.slice(start,start+hostAdminPageSize);
+ $('hostAdminRoomCount').textContent=hostAdminRoomsReadAt?'读取于 '+hostAdminRoomsReadAt+' · 共 '+hostAdminRooms.length+' 个房间，显示 '+(shown.length?start+1:0)+'–'+(start+shown.length)+'。':'尚未读取房间。';
+ for(const room of shown){
+  const row=document.createElement('tr'),identity=document.createElement('td'),phase=document.createElement('td'),players=document.createElement('td'),actions=document.createElement('td');
+  hostAdminText(identity,room.room_id,'host-identity');
+  hostAdminText(identity,'配置：'+(room.configuration_version||'未提供 / 文件来源'),'muted host-identity');
+  hostAdminText(identity,'修订：'+String(room.revision??'—'),'muted host-identity');
+  hostAdminText(phase,room.phase+' · 第 '+String(room.round_no??'—')+' 轮');
+  hostAdminText(phase,room.terminal?'已终局':'未终局','host-time');
+  if(room.termination_reason)hostAdminText(phase,'终止原因：'+room.termination_reason,'host-time');
+  if(room.termination_pending&&!room.terminal)hostAdminText(phase,'终止处理中：'+room.termination_pending,'host-time');
+  if(room.failure_count)hostAdminText(phase,'连续失败：'+String(room.failure_count)+' · 首次 '+hostAdminTime(room.failure_since_ms),'host-time');
+  for(const player of room.players){
+   const item=document.createElement('div');item.className='host-player';
+   hostAdminText(item,player.player_name+' · '+hostAdminLabel(player.control_state));
+   hostAdminText(item,hostAdminLabel(player.ingress)+' · '+(player.registration_id||'无登记身份'),'muted host-identity');players.append(item);
+  }
+  if(!room.players.length)players.textContent='未返回参与身份';
+  const button=document.createElement('button');button.className='danger';button.textContent='终止此房间';
+  button.dataset.hostWrite='terminate_room';button.dataset.hostAllowed=room.terminal||room.termination_pending?'no':'yes';
+  const instance=hostAdminInstance;button.onclick=()=>hostAdminMutate('terminate_room',instance,room);
+  actions.className='host-actions';actions.append(button);row.append(identity,phase,players,actions);rows.append(row);
+ }
+}
+function hostAdminRenderSessions(){
+ const rows=$('hostAdminSessions');rows.replaceChildren();
+ const start=hostAdminSessionPage*hostAdminPageSize,shown=hostAdminSessions.slice(start,start+hostAdminPageSize);
+ $('hostAdminSessionCount').textContent=hostAdminSessionsReadAt?'读取于 '+hostAdminSessionsReadAt+' · '+(hostAdminNameFilter?'精确姓名“'+hostAdminNameFilter+'”':'全部会话')+' · '+hostAdminSessions.length+' 条，显示 '+(shown.length?start+1:0)+'–'+(start+shown.length)+'。':'尚未读取会话。';
+ for(const session of shown){
+  const row=document.createElement('tr'),identity=document.createElement('td'),status=document.createElement('td'),binding=document.createElement('td'),actions=document.createElement('td');
+  hostAdminText(identity,session.player_name);
+  hostAdminText(identity,session.registration_id,'host-identity');hostAdminText(identity,hostAdminLabel(session.ingress),'muted host-identity');
+  hostAdminText(status,hostAdminLabel(session.state));
+  if(session.suspect_offline)hostAdminText(status,'疑似失联（不等于已释放）','host-time');
+  if(session.close_reason)hostAdminText(status,'关闭原因：'+session.close_reason,'host-time');
+  hostAdminText(status,'最后有效请求：'+hostAdminTime(session.last_seen_ms),'host-time');
+  hostAdminText(status,'到期：'+hostAdminTime(session.expires_at_ms),'host-time');
+  hostAdminText(binding,'房间：'+(session.room_id||'—'),'host-identity');
+  hostAdminText(binding,'队列票据：'+(session.queue_ticket_id||'—'),'host-identity');
+  const button=document.createElement('button');button.className='danger';button.textContent='关闭此会话';
+  button.dataset.hostWrite='revoke_session';button.dataset.hostAllowed=['closing','closed','expired'].includes(session.state)?'no':'yes';
+  const instance=hostAdminInstance;button.onclick=()=>hostAdminMutate('revoke_session',instance,session);
+  actions.className='host-actions';actions.append(button);row.append(identity,status,binding,actions);rows.append(row);
+ }
+}
+function hostAdminMutate(action,instance,target){
+ if(hostAdminWorking||redisWorking||hostPolicyWorking||!hostAdminFresh||instance!==hostAdminInstance)return;
+ const session=action==='revoke_session',targetID=session?target.registration_id:target.room_id;
+ if(!hostAdminID(instance)||!hostAdminID(targetID))return;
+ const identity=session?'玩家：'+target.player_name+'\n登记 ID：'+targetID+'\n入口：'+hostAdminLabel(target.ingress):'房间 ID：'+targetID;
+ const effect=session?'撤销这次登记的凭据、排队与控制权。席位按服务器规则接管或结束；不能借此接管其他同名身份。':'终止这个房间并记录管理终止原因。已提交事实不回滚，不生成正常冠军。';
+ if(!confirm((session?'关闭指定会话？':'终止指定房间？')+'\n实例：'+instance+'\n'+identity+'\n'+effect))return;
+ const requestID=crypto.randomUUID().replaceAll('-','');
+ const body={expected_instance_id:instance,request_id:requestID};
+ if(session){body.registration_id=targetID;body.ingress=target.ingress}else body.room_id=targetID;
+ hostAdminRun(session?'关闭会话':'终止房间',async request=>{
+  hostAdminFresh=false;
+  hostAdminLastRequest={action,expected_instance_id:instance,target_id:targetID,ingress:session?target.ingress:'',request_id:requestID,status:'sending'};
+  hostAdminStoreReceipt();hostAdminUpdateControls();
+  const result=await request(session?'/revoke-session':'/terminate-room','POST',body);
+  if(!['accepted','completed'].includes(result.status)||result.instance_id!==instance||result.request_id!==requestID||result.action!==action||result.target_id!==targetID)throw Error('操作回执与原实例、请求或目标不匹配');
+  hostAdminLastRequest.status=result.status;hostAdminStoreReceipt();
+  $('hostAdminFreshness').textContent='已提交定向操作，下方是操作前的快照。请显式重新读取状态。';
+  $('hostAdminHint').textContent=result.status==='accepted'?'宿主已受理，清理可能尚未完成；点击“读取房间与会话”核对实际状态。':'宿主已确认完成；点击“读取房间与会话”核对实际状态。';
+ },true);
+}
+$('hostAdminRead').onclick=()=>hostAdminRun('读取房间与会话',async request=>{
+ const result=await request('/rooms');hostAdminCheckRooms(result.rooms);hostAdminCheckSessions(result.sessions);hostAdminAcceptInstance(result);
+ hostAdminRooms=result.rooms;hostAdminSessions=result.sessions;hostAdminRoomPage=0;hostAdminSessionPage=0;hostAdminNameFilter='';
+ hostAdminRoomsReadAt=new Date().toLocaleString();hostAdminSessionsReadAt=hostAdminRoomsReadAt;hostAdminFresh=true;
+ hostAdminRenderRooms();hostAdminRenderSessions();
+ $('hostAdminFreshness').textContent='已读取当前宿主的管理快照；这是读取时的状态，不是自动刷新的实时视图。';
+ $('hostAdminHint').textContent='读取成功。可精确查询姓名占用，或核对实例与目标后执行定向操作。';
+});
+$('hostAdminDiagnose').onclick=()=>{
+ const name=$('hostAdminName').value.trim();if(!name){$('hostAdminHint').textContent='请输入要精确查询的玩家名；查看全部会话请读取房间与会话。';return}
+ hostAdminRun('查询姓名占用',async request=>{
+  const result=await request('/sessions?player_name='+encodeURIComponent(name));hostAdminCheckSessions(result.sessions);hostAdminAcceptInstance(result);
+  hostAdminSessions=result.sessions;hostAdminSessionPage=0;hostAdminNameFilter=name;hostAdminSessionsReadAt=new Date().toLocaleString();hostAdminFresh=true;
+  hostAdminRenderRooms();hostAdminRenderSessions();
+  $('hostAdminFreshness').textContent='已读取所选姓名的会话；房间列表保持其标注的最近读取时间。';
+  $('hostAdminHint').textContent=result.sessions.length?'诊断结果已显示。关闭操作按登记 ID 与入口执行，姓名仅用于查询。':'该姓名未返回会话。仍可读取房间检查旧入口席位，不能据此保证任意客户端一定可登记。';
+ });
+};
+for(const [id,kind,delta] of [['hostAdminRoomsPrev','rooms',-1],['hostAdminRoomsNext','rooms',1],['hostAdminSessionsPrev','sessions',-1],['hostAdminSessionsNext','sessions',1]]){
+ $(id).onclick=()=>{if(kind==='rooms'){hostAdminRoomPage+=delta;hostAdminRenderRooms()}else{hostAdminSessionPage+=delta;hostAdminRenderSessions()}hostAdminUpdateControls()};
+}
+try{
+ const saved=JSON.parse(sessionStorage.getItem('hostAdminLastRequest'));
+ if(saved&&hostAdminID(saved.expected_instance_id)&&hostAdminID(saved.target_id)&&/^[a-f0-9]{32}$/.test(saved.request_id)&&['revoke_session','terminate_room'].includes(saved.action)){
+  hostAdminLastRequest=saved;if(saved.status==='sending')hostAdminLastRequest.status='unknown';hostAdminRenderReceipt();
+ }
+}catch{}
+hostAdminUpdateControls();
+hostPolicyUpdateControls();
+</script></body></html>
